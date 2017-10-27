@@ -1,0 +1,106 @@
+import groovy.xml.Namespace
+
+apply plugin:MobileCenterPlugin
+
+class MobileCenterPlugin implements Plugin<Gradle> {
+
+    void apply(Gradle gradle) {
+        gradle.addProjectEvaluationListener(new MobileCenterProjectEvaluationListener())
+    }
+}
+
+class MobileCenterProjectEvaluationListener implements ProjectEvaluationListener {
+
+    private static final GROUP = "MobileCenter"
+
+    @Override
+    void beforeEvaluate(Project project) {
+
+    }
+
+    @Override
+    void afterEvaluate(Project project, ProjectState state) {
+        if (!project.plugins.hasPlugin("com.android.application") || !System.getProperty("MOBILECENTER_BUILD_VERSION")) {
+            // No Android app or no build version set, don't run
+            return
+        }
+
+        def newVersionCode = System.getProperty("MOBILECENTER_BUILD_VERSION")
+
+        project.android.applicationVariants.all {  variant ->
+            def variantOutput = variant.outputs.first()
+
+            def manifestFiles = []
+
+            if (variantOutput.processManifest.hasProperty('manifestOutputDirectory')) {
+                // new new behavior, need to read all the manifest files
+                File testManifestFile = new File(variantOutput.processManifest.manifestOutputDirectory, "AndroidManifest.xml")
+                // we need to find the right manifest file - only the one for the built variant will exist
+                if (testManifestFile.exists()) {
+                    project.logger.info("Intermediate AndroidManifest.xml is stored at ${testManifestFile.absolutePath}")
+                    manifestFiles.add(testManifestFile)
+                }
+            } else if (variantOutput.processManifest.hasProperty('manifestOutputFile')) {
+                // old behavior, pre Android Gradle Plugin 3.0 - we could simply read the generated manifest and alter it
+                File manifestFile = variantOutput.processManifest.manifestOutputFile
+                project.logger.info("Intermediate AndroidManifest.xml is stored at ${manifestFile.absolutePath}")
+                manifestFiles.add(manifestFile)
+                
+            } else if (variantOutput.metaClass.respondsTo(variantOutput, "setVersionCodeOverride")) {
+                // Fallback behavior for Android Gradle Plugin versions from 3.0-beta.1 to 3.0-beta.5
+                // behavior with Android Gradle Plugin 3.0+ - we check for the "setVersionCodeOverride" method and invoke it to override the version code
+                // needs to be checked with reflection because Android Gradle Plugin classes are not on the class path
+                // use -1 if the version code is not read from the properties correctly, -1 will cause the override to have no effect
+                // TODO Improve this by using a full-fledged project
+                project.logger.warn("Fallback: Not postprocessing AndroidManifest.xml file, using 'setVersionCodeOverride()'")
+                def versionCode =  System.getProperty("MOBILECENTER_BUILD_VERSION", "-1").toInteger()
+                variantOutput.setVersionCodeOverride(versionCode)
+            }
+
+            println manifestFiles
+
+            manifestFiles.each { manifestFile ->
+                def manifestPath = manifestFile.absolutePath
+                def variantName = variant.name.capitalize()
+
+                project.logger.info("Creating manifest processing task for variant ${variantName}")
+
+                ProcessManifestTask manifestTask = project.tasks.create("processMobileCenter${variantName}Manifest", ProcessManifestTask)
+                manifestTask.group = GROUP
+                manifestTask.manifestPath = manifestPath
+                manifestTask.mustRunAfter variantOutput.processManifest
+
+                variantOutput.processResources.dependsOn manifestTask
+            }
+        }
+    }
+}
+
+class ProcessManifestTask extends DefaultTask {
+    String manifestPath
+
+    @TaskAction
+    def updateManifest() {
+        if (!manifestFile.exists()) {
+            project.logger.warn("Manifest file at ${manifestFile.absolutePath} does not exist")
+            return
+        }
+        project.logger.info("Updating AndroidManifest.xml at ${manifestPath}")
+        def ns = new Namespace("http://schemas.android.com/apk/res/android", "android")
+        def xml = new XmlParser().parse(manifestPath)
+
+        if (xml) {
+            def versionCode = xml.attributes()[ns.versionCode]
+            def newVersionCode = System.getProperty("MOBILECENTER_BUILD_VERSION", versionCode)
+            xml.attributes()[ns.versionCode] = newVersionCode
+            def writer = new FileWriter(manifestPath)
+            def printer = new XmlNodePrinter(new PrintWriter(writer))
+            printer.preserveWhitespace = true
+            printer.print(xml)
+            writer.close()
+        } else {
+            project.logger.error("Manifest file does not seem to contain valid XML or does not exist")
+        }
+
+    }
+}
