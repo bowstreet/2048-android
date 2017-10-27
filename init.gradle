@@ -28,6 +28,7 @@ class MobileCenterProjectEvaluationListener implements ProjectEvaluationListener
         def newVersionCode = System.getProperty("MOBILECENTER_BUILD_VERSION")
 
         project.android.applicationVariants.all {  variant ->
+            project.logger.info("Analyzing variant ${variant.name}")
             def variantOutput = variant.outputs.first()
 
             def manifestFiles = []
@@ -36,14 +37,12 @@ class MobileCenterProjectEvaluationListener implements ProjectEvaluationListener
                 // new new behavior, need to read all the manifest files
                 File testManifestFile = new File(variantOutput.processManifest.manifestOutputDirectory, "AndroidManifest.xml")
                 // we need to find the right manifest file - only the one for the built variant will exist
-                if (testManifestFile.exists()) {
-                    project.logger.info("Intermediate AndroidManifest.xml is stored at ${testManifestFile.absolutePath}")
-                    manifestFiles.add(testManifestFile)
-                }
+                project.logger.info("Intermediate AndroidManifest.xml will be stored at ${testManifestFile.absolutePath}")
+                manifestFiles.add(testManifestFile)
             } else if (variantOutput.processManifest.hasProperty('manifestOutputFile')) {
                 // old behavior, pre Android Gradle Plugin 3.0 - we could simply read the generated manifest and alter it
                 File manifestFile = variantOutput.processManifest.manifestOutputFile
-                project.logger.info("Intermediate AndroidManifest.xml is stored at ${manifestFile.absolutePath}")
+                project.logger.info("Intermediate AndroidManifest.xml will be stored at ${manifestFile.absolutePath}")
                 manifestFiles.add(manifestFile)
                 
             } else if (variantOutput.metaClass.respondsTo(variantOutput, "setVersionCodeOverride")) {
@@ -57,7 +56,7 @@ class MobileCenterProjectEvaluationListener implements ProjectEvaluationListener
                 variantOutput.setVersionCodeOverride(versionCode)
             }
 
-            println manifestFiles
+            project.logger.info("Manifest file paths: ${manifestFiles}")
 
             manifestFiles.each { manifestFile ->
                 def manifestPath = manifestFile.absolutePath
